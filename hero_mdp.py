@@ -4,7 +4,7 @@ import jax
 import jax.numpy as np
 import numpy as onp
 
-hidden_mu_vals = np.array([105.0, 95.0, 100.0]) # A, B, C
+hidden_mu_vals = np.array([95.0, 105.0, 100.0]) # A, B, C
 trader_names = ["A", "B", "C"]
 num_turns = 3
 
@@ -81,12 +81,9 @@ def get_greedy_action_jax(s):
     can_buy = (mu_i - ask_val) > 0
     can_sell = (bid_val - mu_i) > 0
 
-    can_tighten = (bi + 1) < (ai - 1)
-
     return np.where(can_buy, 1,
-           np.where(can_sell, 2,
-           np.where(can_tighten, 0,
-           1)))
+           np.where(can_sell, 2, 0)
+           )
 
 @jax.jit
 def Tr(s, a, s_):
@@ -151,8 +148,10 @@ def run_simulation(Q_vals):
     curr_bid = starting_bid
     curr_ask = starting_ask
     curr_turn = 0 # Start with Agent A
+    no_progress_count = 0
 
-    rewards = {"A": 0.0, "B": 0.0, "C": 0.0}
+    true_rewards = {"A": 0.0, "B": 0.0, "C": 0.0}
+    hidden_rewards = {"A": 0.0, "B": 0.0, "C": 0.0}
 
     print(f"\n--- SIMULATION START: Bid {curr_bid} | Ask {curr_ask} | True Value {TRUE_MU} ---")
 
@@ -191,9 +190,13 @@ def run_simulation(Q_vals):
             # Trader Buys @ Ask from Counterparty
             r_actor = TRUE_MU - curr_ask
             r_counter = curr_ask - TRUE_MU
+            r_actor_hidden = float(hidden_mu_vals[curr_turn]) - curr_ask
+            r_counter_hidden = curr_ask - float(hidden_mu_vals[prev_trader_idx])
 
-            rewards[trader] += r_actor
-            rewards[prev_trader] += r_counter
+            true_rewards[trader] += r_actor
+            true_rewards[prev_trader] += r_counter
+            hidden_rewards[trader] += r_actor_hidden
+            hidden_rewards[prev_trader] += r_counter_hidden
 
             print(f" >>> EXECUTION: {trader} BUYS from {prev_trader} @ {curr_ask}")
             print(f"     {trader} Profit: {r_actor} (TrueMu {TRUE_MU} - Ask {curr_ask})")
@@ -204,9 +207,13 @@ def run_simulation(Q_vals):
             # Trader Sells @ Bid to Counterparty
             r_actor = curr_bid - TRUE_MU
             r_counter = TRUE_MU - curr_bid
+            r_actor_hidden = curr_bid - float(hidden_mu_vals[curr_turn])
+            r_counter_hidden = float(hidden_mu_vals[prev_trader_idx]) - curr_bid
 
-            rewards[trader] += r_actor
-            rewards[prev_trader] += r_counter
+            true_rewards[trader] += r_actor
+            true_rewards[prev_trader] += r_counter
+            hidden_rewards[trader] += r_actor_hidden
+            hidden_rewards[prev_trader] += r_counter_hidden
 
             print(f" >>> EXECUTION: {trader} SELLS to {prev_trader} @ {curr_bid}")
             print(f"     {trader} Profit: {r_actor} (Bid {curr_bid} - TrueMu {TRUE_MU})")
@@ -219,13 +226,20 @@ def run_simulation(Q_vals):
                 curr_ask -= 1
                 print(f"     Update: Spread tightens to {curr_bid} ... {curr_ask}")
             else:
-                print(f"     Action 0 (Tighten) chosen but spread is too tight. Prices hold.")
+                no_progress_count += 1
+
+                if no_progress_count >= 3:
+                    print(f"\n >>> TERMINATION: No progress made for {no_progress_count} consecutive steps.")
+                    print(f"     Spread locked at {curr_bid} ... {curr_ask}. No trade executed.")
+                    break
 
         curr_turn = (curr_turn + 1) % 3
 
     print("\n" + "="*40)
-    print("FINAL SCORES (Based on True Value)")
-    print(rewards)
+    print("FINAL SCORES (Based on True Rewards)")
+    print(true_rewards)
+    print("FINAL SCORES (Based on Hidden Rewards)")
+    print(hidden_rewards)
     print("="*40)
 
 if __name__ == "__main__":
