@@ -8,12 +8,13 @@ import matplotlib.patches as mpatches
 from matplotlib.gridspec import GridSpec
 
 # --- 1. CONFIGURATION ---
-hidden_mu_vals = np.array([92.0, 105.0, 107.0])
-belief_mu_vals = np.array([95.0, 105.0, 107.0, 110.0, 106.0])
+hidden_mu_vals = np.array([104.0, 96.0, 96.0])
+belief_mu_vals = np.array([94.0, 96.0, 98.0, 100.0, 102.0, 104.0, 106.0])
 trader_names = ["A", "B", "C"]
 num_turns = 3
 TRUE_MU = 100.0
-ASSUMED_BETA = 1.0
+PLANNING_BETA_B = 20.0
+PLANNING_BETA_C = .5
 
 starting_bid = 90.0
 starting_ask = 110.0
@@ -123,7 +124,8 @@ def get_utility(bi_next, ai_next, ti_next, a_cand, future_q_val, b_idx, c_idx):
 @jax.jit
 def get_belief_wpp(candidate_idx, current_idx, ti_next, bi_next, ai_next, obs_action, target_turn):
     is_target_turn = (ti_next == target_turn)
-    likelihood = update_belief_w_soft(candidate_idx, bi_next, ai_next, obs_action, ASSUMED_BETA)
+    assumed_beta = np.where(target_turn == 1, PLANNING_BETA_B, PLANNING_BETA_C)
+    likelihood = update_belief_w_soft(candidate_idx, bi_next, ai_next, obs_action, assumed_beta)
     identity = np.where(candidate_idx == current_idx, 1.0, 0.0)
     return np.where(is_target_turn, likelihood, identity)
 
@@ -167,6 +169,107 @@ def Q[bi: Prices, ai: Prices, ti: Turns, b: B, c: C, a: A](t):
 
 # --- 5. VISUALIZATION FUNCTIONS ---
 
+def save_belief_distribution_b(history_data, filename='belief_distribution_agent_b.png'):
+    """Save belief distribution heatmap for Agent B."""
+    all_prob_b = []
+    for round_data in history_data:
+        for step_data in round_data['steps']:
+            all_prob_b.append(onp.array(step_data['prob_b']))
+
+    prob_b_matrix = onp.array(all_prob_b)
+
+    fig, ax = plt.subplots(figsize=(12, 6))
+    im = ax.imshow(prob_b_matrix.T, aspect='auto', cmap='YlOrRd', interpolation='nearest', origin='lower')
+    ax.set_xlabel('Step (across all rounds)')
+    ax.set_ylabel('Belief μ Value')
+    ax.set_title('Trader A\'s Belief Distribution for Trader B (hidden μ = 96)', fontsize=14, fontweight='bold')
+    ax.set_yticks(range(len(belief_mu_vals)))
+    ax.set_yticklabels([f'{mu:.1f}' for mu in belief_mu_vals])
+    plt.colorbar(im, ax=ax, label='Probability')
+
+    # Add vertical lines for round boundaries
+    step_idx = 0
+    for round_data in history_data:
+        step_idx += len(round_data['steps'])
+        if step_idx < len(all_prob_b):
+            ax.axvline(step_idx - 0.5, color='blue', linestyle='--', alpha=0.5, linewidth=1)
+
+    plt.tight_layout()
+    plt.savefig(filename, dpi=150, bbox_inches='tight')
+    print(f"✓ Saved {filename}")
+    plt.close()
+
+def save_belief_distribution_c(history_data, filename='belief_distribution_agent_c.png'):
+    """Save belief distribution heatmap for Agent C."""
+    all_prob_c = []
+    for round_data in history_data:
+        for step_data in round_data['steps']:
+            all_prob_c.append(onp.array(step_data['prob_c']))
+
+    prob_c_matrix = onp.array(all_prob_c)
+
+    fig, ax = plt.subplots(figsize=(12, 6))
+    im = ax.imshow(prob_c_matrix.T, aspect='auto', cmap='YlGnBu', interpolation='nearest', origin='lower')
+    ax.set_xlabel('Step (across all rounds)')
+    ax.set_ylabel('Belief μ Value')
+    ax.set_title('Trader A\'s Belief Distribution for Trader C (hidden μ = 96)', fontsize=14, fontweight='bold')
+    ax.set_yticks(range(len(belief_mu_vals)))
+    ax.set_yticklabels([f'{mu:.1f}' for mu in belief_mu_vals])
+    plt.colorbar(im, ax=ax, label='Probability')
+
+    # Add vertical lines for round boundaries
+    step_idx = 0
+    for round_data in history_data:
+        step_idx += len(round_data['steps'])
+        if step_idx < len(all_prob_c):
+            ax.axvline(step_idx - 0.5, color='blue', linestyle='--', alpha=0.5, linewidth=1)
+
+    plt.tight_layout()
+    plt.savefig(filename, dpi=150, bbox_inches='tight')
+    print(f"✓ Saved {filename}")
+    plt.close()
+
+def save_certainty_plot(history_data, filename='certainty_trader_mu_values.png'):
+    """Save certainty plot for traders B and C's μ values."""
+    all_prob_b = []
+    all_prob_c = []
+    for round_data in history_data:
+        for step_data in round_data['steps']:
+            all_prob_b.append(onp.array(step_data['prob_b']))
+            all_prob_c.append(onp.array(step_data['prob_c']))
+
+    # Calculate certainty
+    certainty_b = []
+    certainty_c = []
+    for pb in all_prob_b:
+        max_val = onp.max(onp.nan_to_num(pb, nan=0.0))
+        certainty_b.append(max_val if not onp.isnan(max_val) else 0.0)
+    for pc in all_prob_c:
+        max_val = onp.max(onp.nan_to_num(pc, nan=0.0))
+        certainty_c.append(max_val if not onp.isnan(max_val) else 0.0)
+
+    fig, ax = plt.subplots(figsize=(12, 6))
+    ax.plot(certainty_b, 'o-', label='Certainty in B\'s μ', color='blue', markersize=4, linewidth=1.5)
+    ax.plot(certainty_c, 's-', label='Certainty in C\'s μ', color='green', markersize=4, linewidth=1.5)
+    ax.set_xlabel('Steps (across all rounds)')
+    ax.set_ylabel('Certainty (Max Probability)')
+    ax.set_title('Certainty in Trader μ Values', fontsize=14, fontweight='bold')
+    ax.set_ylim([0, 1.05])
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+
+    # Add vertical lines for round boundaries
+    step_idx = 0
+    for round_data in history_data:
+        step_idx += len(round_data['steps'])
+        if step_idx < len(certainty_b):
+            ax.axvline(step_idx - 0.5, color='blue', linestyle='--', alpha=0.3, linewidth=1)
+
+    plt.tight_layout()
+    plt.savefig(filename, dpi=150, bbox_inches='tight')
+    print(f"✓ Saved {filename}")
+    plt.close()
+
 def visualize_simulation(history_data):
     """Create comprehensive visualizations of the simulation."""
 
@@ -197,6 +300,11 @@ def visualize_simulation(history_data):
     # Convert to numpy arrays
     prob_b_matrix = onp.array(all_prob_b)
     prob_c_matrix = onp.array(all_prob_c)
+
+    # Save individual graphs
+    save_belief_distribution_b(history_data)
+    save_belief_distribution_c(history_data)
+    save_certainty_plot(history_data)
 
     # Create figure with subplots
     fig = plt.figure(figsize=(20, 14))
@@ -295,8 +403,15 @@ def visualize_simulation(history_data):
     # 6. Certainty in Trader B and C's μ Values
     ax6 = fig.add_subplot(gs[2, 1])
     # Calculate certainty as the maximum probability in the belief distribution
-    certainty_b = [onp.max(pb) for pb in all_prob_b]
-    certainty_c = [onp.max(pc) for pc in all_prob_c]
+    # Handle NaN values by replacing with 0
+    certainty_b = []
+    certainty_c = []
+    for pb in all_prob_b:
+        max_val = onp.max(onp.nan_to_num(pb, nan=0.0))
+        certainty_b.append(max_val if not onp.isnan(max_val) else 0.0)
+    for pc in all_prob_c:
+        max_val = onp.max(onp.nan_to_num(pc, nan=0.0))
+        certainty_c.append(max_val if not onp.isnan(max_val) else 0.0)
 
     ax6.plot(certainty_b, 'o-', label='Certainty in B\'s μ', color='orange', markersize=4, linewidth=1.5)
     ax6.plot(certainty_c, 's-', label='Certainty in C\'s μ', color='cyan', markersize=4, linewidth=1.5)
@@ -316,15 +431,33 @@ def visualize_simulation(history_data):
 
     # 7. Most Likely μ Values with Certainty Shading
     ax7 = fig.add_subplot(gs[2, 2])
-    most_likely_b = [belief_mu_vals[onp.argmax(pb)] for pb in all_prob_b]
-    most_likely_c = [belief_mu_vals[onp.argmax(pc)] for pc in all_prob_c]
+    most_likely_b = []
+    most_likely_c = []
+    for pb, pc in zip(all_prob_b, all_prob_c):
+        pb_clean = onp.nan_to_num(pb, nan=0.0)
+        pc_clean = onp.nan_to_num(pc, nan=0.0)
+        if onp.sum(pb_clean) > 0:
+            most_likely_b.append(belief_mu_vals[onp.argmax(pb_clean)])
+        else:
+            most_likely_b.append(belief_mu_vals[0])  # Default to first value
+        if onp.sum(pc_clean) > 0:
+            most_likely_c.append(belief_mu_vals[onp.argmax(pc_clean)])
+        else:
+            most_likely_c.append(belief_mu_vals[0])  # Default to first value
+
     true_b = float(hidden_mu_vals[1])
     true_c = float(hidden_mu_vals[2])
 
     # Plot with transparency based on certainty
     for i, (ml_b, ml_c, cert_b, cert_c) in enumerate(zip(most_likely_b, most_likely_c, certainty_b, certainty_c)):
-        ax7.scatter(i, ml_b, c='orange', s=50*cert_b + 20, alpha=min(cert_b + 0.3, 1.0), marker='o', edgecolors='orange', linewidths=1)
-        ax7.scatter(i, ml_c, c='cyan', s=50*cert_c + 20, alpha=min(cert_c + 0.3, 1.0), marker='s', edgecolors='cyan', linewidths=1)
+        # Ensure alpha is in valid range [0, 1] and not NaN
+        alpha_b = min(max(cert_b + 0.3, 0.0), 1.0) if not onp.isnan(cert_b) else 0.3
+        alpha_c = min(max(cert_c + 0.3, 0.0), 1.0) if not onp.isnan(cert_c) else 0.3
+        size_b = max(50 * cert_b + 20, 20) if not onp.isnan(cert_b) else 20
+        size_c = max(50 * cert_c + 20, 20) if not onp.isnan(cert_c) else 20
+
+        ax7.scatter(i, ml_b, c='orange', s=size_b, alpha=alpha_b, marker='o', edgecolors='orange', linewidths=1)
+        ax7.scatter(i, ml_c, c='cyan', s=size_c, alpha=alpha_c, marker='s', edgecolors='cyan', linewidths=1)
 
     ax7.axhline(true_b, color='orange', linestyle='--', alpha=0.5, linewidth=2, label=f'True μ_B = {true_b}')
     ax7.axhline(true_c, color='cyan', linestyle='--', alpha=0.5, linewidth=2, label=f'True μ_C = {true_c}')
@@ -366,10 +499,10 @@ def run_simulation(Q_vals, visualize=True):
     # History tracking for visualization
     history_data = []
 
-    print(f"\n{'='*20} STARTING SIMULATION (3 ROUNDS) {'='*20}")
+    print(f"\n{'='*20} STARTING SIMULATION (5 ROUNDS) {'='*20}")
     curr_turn = 0
 
-    for round_num in range(1, 4):
+    for round_num in range(1, 6):
         round_steps = []  # Track steps in this round
         # 2. MARKET RESET: Reset state for new round
         curr_bid = starting_bid
@@ -411,18 +544,25 @@ def run_simulation(Q_vals, visualize=True):
             else:
                 mu_i = hidden_mu_vals[curr_turn]
                 key, subkey = jax.random.split(key)
-                beta = 1.0
+
+                 # DIFFERENTIATED RATIONALITY
+                if curr_turn == 1: # TRADER B (Rational)
+                    current_beta = PLANNING_BETA_B
+                    trader_type = "Rational"
+                else:              # TRADER C (Irrational)
+                    current_beta = PLANNING_BETA_C
+                    trader_type = "Irrational"
 
                 # Sample action using Softmax
                 action = int(get_stochastic_action(
                     b_idx, a_idx, mu_i,
-                    beta,
+                    current_beta,
                     subkey
                 ))
                 source = f"Greedy (Mu={mu_i})"
 
                 # UPDATE PERSISTENT BELIEFS
-                lik_fn = lambda idx: update_belief_w_soft(idx, b_idx, a_idx, action, ASSUMED_BETA)
+                lik_fn = lambda idx: update_belief_w_soft(idx, b_idx, a_idx, action, current_beta)
                 if curr_turn == 1:
                     likelihoods = np.array([lik_fn(i) for i in range(num_mu_states)])
                     prob_b = (prob_b * likelihoods) / np.sum(prob_b * likelihoods)
@@ -460,7 +600,8 @@ def run_simulation(Q_vals, visualize=True):
                 total_hidden_rewards[prev_trader] += r_counter_hidden
 
                 print(f" >>> EXECUTION: {trader} BUYS from {prev_trader} @ {curr_ask}")
-                print(f"     Round Profits: {trader}={r_actor}, {prev_trader}={r_counter}")
+                print(f"     Round Profits (True): {trader}={r_actor}, {prev_trader}={r_counter}")
+                print(f"     Round Profits (Hidden): {trader}={r_actor_hidden}, {prev_trader}={r_counter_hidden}")
                 curr_turn = (curr_turn + 1) % 3
                 history_data.append({'round_num': round_num, 'steps': round_steps})
                 break # ROUND ENDS
@@ -477,7 +618,8 @@ def run_simulation(Q_vals, visualize=True):
                 total_hidden_rewards[prev_trader] += r_counter_hidden
 
                 print(f" >>> EXECUTION: {trader} SELLS to {prev_trader} @ {curr_bid}")
-                print(f"     Round Profits: {trader}={r_actor}, {prev_trader}={r_counter}")
+                print(f"     Round Profits (True): {trader}={r_actor}, {prev_trader}={r_counter}")
+                print(f"     Round Profits (Hidden): {trader}={r_actor_hidden}, {prev_trader}={r_counter_hidden}")
                 curr_turn = (curr_turn + 1) % 3
                 history_data.append({'round_num': round_num, 'steps': round_steps})
                 break # ROUND ENDS

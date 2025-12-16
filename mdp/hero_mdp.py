@@ -3,8 +3,12 @@ from memo import memo
 import jax
 import jax.numpy as np
 import numpy as onp
+import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
+from matplotlib.gridspec import GridSpec
+from matplotlib.colors import LinearSegmentedColormap
 
-hidden_mu_vals = np.array([95.0, 105.0, 100.0]) # A, B, C
+hidden_mu_vals = np.array([95.0, 95.0, 95.0]) # A, B, C
 trader_names = ["A", "B", "C"]
 num_turns = 3
 
@@ -144,7 +148,93 @@ def Q[s: S, a: A](t):
         )
     ]
 
-def run_simulation(Q_vals):
+def visualize_optimal_policy(Q_vals, history=None, filename='optimal_policy_clean.png'):
+    """
+    Visualizes the policy with ILLEGAL states (Bid >= Ask) masked out (transparent).
+    """
+    Q_array = onp.array(Q_vals)
+
+    # 1. Create the Policy Grid
+    # Initialize with a dummy value (e.g., 0)
+    policy_grid = onp.zeros((num_prices, num_prices))
+
+    # Fill with optimal actions
+    for s in range(len(S)):
+        bi, ai, ti = decode(s)
+        bi, ai, ti = int(bi), int(ai), int(ti)
+
+        if ti == 0: # Planner Only
+            q_s = Q_array[s, :]
+            optimal_action = int(onp.argmax(q_s))
+            if ai < num_prices and bi < num_prices:
+                policy_grid[ai, bi] = optimal_action
+
+    # 2. Create a Mask for Illegal States (Ask <= Bid)
+    # We create a boolean grid where True = "Hide this cell"
+    mask = onp.zeros_like(policy_grid, dtype=bool)
+    for bi in range(num_prices):
+        for ai in range(num_prices):
+            if ai <= bi:
+                mask[ai, bi] = True # Mask out illegal states
+
+    # Apply the mask
+    masked_policy_grid = onp.ma.masked_array(policy_grid, mask)
+
+    # 3. Plotting
+    fig, ax = plt.subplots(figsize=(12, 10))
+
+    # Updated Colormap: Only needs 3 colors now (Tighten, Buy, Sell)
+    # 0=Tighten (Blue), 1=Buy (Green), 2=Sell (Red)
+    from matplotlib.colors import ListedColormap, BoundaryNorm
+    policy_colors = ['#3498db', '#2ecc71', '#e74c3c']
+    cmap = ListedColormap(policy_colors)
+    bounds = [-0.5, 0.5, 1.5, 2.5] # Boundaries between 0, 1, 2
+    norm = BoundaryNorm(bounds, cmap.N)
+
+    # Extent maps array indices to price values
+    extent = [starting_bid - 0.5, starting_ask + 0.5, starting_bid - 0.5, starting_ask + 0.5]
+
+    # Render with 'set_bad' color (transparency)
+    cmap.set_bad(color='white', alpha=0)
+
+    im = ax.imshow(masked_policy_grid, aspect='auto', cmap=cmap, norm=norm,
+                   interpolation='nearest', origin='lower', extent=extent)
+
+    # --- Overlay Simulation Path (Optional) ---
+    if history:
+        path_bids = [step['bid'] for step in history]
+        path_asks = [step['ask'] for step in history]
+
+        ax.plot(path_bids, path_asks, color='black', linewidth=3, linestyle='-', alpha=0.3, label='Path')
+        ax.plot(path_bids, path_asks, color='white', linewidth=1.5, linestyle='--')
+
+        ax.scatter(path_bids[0], path_asks[0], color='gold', s=120, edgecolors='black', zorder=10, label='Start')
+        final_act = history[-1]['action_name']
+        ax.scatter(path_bids[-1], path_asks[-1], color='black', marker='X', s=150, zorder=10, label=f'End ({final_act})')
+
+    # Formatting
+    hero_mu = float(hidden_mu_vals[0])
+    ax.axvline(hero_mu, color='purple', linestyle=':', alpha=0.5, label=f'Hero Val ({hero_mu})')
+    ax.axhline(hero_mu, color='purple', linestyle=':', alpha=0.5)
+
+    ax.set_xlabel('Bid Price')
+    ax.set_ylabel('Ask Price')
+    ax.set_title('Optimal Policy (Valid States Only)')
+
+    # Legend
+    patches = [
+        mpatches.Patch(color='#3498db', label='Tighten'),
+        mpatches.Patch(color='#2ecc71', label='BUY'),
+        mpatches.Patch(color='#e74c3c', label='SELL')
+    ]
+    ax.legend(handles=patches, loc='upper right')
+
+    plt.grid(True, alpha=0.15)
+    plt.tight_layout()
+    plt.savefig(filename, dpi=150)
+    plt.show()
+
+def run_simulation(Q_vals, visualize=True, t_horizon=10):
     curr_bid = starting_bid
     curr_ask = starting_ask
     curr_turn = 0 # Start with Agent A
@@ -152,6 +242,9 @@ def run_simulation(Q_vals):
 
     true_rewards = {"A": 0.0, "B": 0.0, "C": 0.0}
     hidden_rewards = {"A": 0.0, "B": 0.0, "C": 0.0}
+
+    # Track history for visualization
+    history = []
 
     print(f"\n--- SIMULATION START: Bid {curr_bid} | Ask {curr_ask} | True Value {TRUE_MU} ---")
 
@@ -184,6 +277,16 @@ def run_simulation(Q_vals):
         # Log the attempt
         act_str = ["Tighten", "BUY", "SELL"][action]
         print(f"Step {step} | {trader} [{source}] decides to {act_str}")
+
+        # Record history
+        history.append({
+            'step': step,
+            'trader': trader,
+            'bid': curr_bid,
+            'ask': curr_ask,
+            'action': action,
+            'action_name': act_str
+        })
 
         # 3. EXECUTE & DISTRIBUTE REWARDS
         if action == 1: # BUY
@@ -242,7 +345,20 @@ def run_simulation(Q_vals):
     print(hidden_rewards)
     print("="*40)
 
+    # Generate visualizations
+    if visualize:
+        visualize_optimal_policy(Q_vals)  # Focused policy visualization
+
+    return history, true_rewards, hidden_rewards
+
 if __name__ == "__main__":
     print("Compiling Policy...")
-    Q_vals = Q(10).block_until_ready()
-    run_simulation(Q_vals)
+    t_horizon = 10
+    Q_vals = Q(t_horizon).block_until_ready()
+    print("Policy compiled. Running simulation...")
+
+    # 1. Run Sim
+    history, true_rewards, hidden_rewards = run_simulation(Q_vals, visualize=False, t_horizon=t_horizon)
+
+    # 2. Visualize with History Overlay
+    visualize_optimal_policy(Q_vals, history=history)

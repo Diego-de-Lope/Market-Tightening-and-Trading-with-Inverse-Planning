@@ -155,83 +155,102 @@ def R(s, a):
            np.where(is_hero_counterparty, hero_passive_r,
            0.0))
 
-@cache
-@memo
-def Q[s: S, a: A](t):
-    agent: knows(s, a)
-    agent: given(s_ in S, wpp=Tr(s, a, s_))
-    agent: chooses(
-        a_ in A,
-        to_maximize=(
-            0.0 if t < 0 else
-            0.0 if is_terminating(s, a) else
-            get_utility(s_, a_, Q[s_, a_](t - 1))
-        )
-    )
-    return E[
-        R(s, a) + (
-            0.0 if t < 0 else
-            0.0 if is_terminating(s, a) else
-            Q[agent.s_, agent.a_](t - 1)
-        )
-    ]
 
+
+# @cache
+# @memo
+# def Q[s: S, a: A](t):
+#     agent: knows(s, a)
+#     agent: given(s_ in S, wpp=Tr(s, a, s_))
+#     agent: chooses(
+#         a_ in A,
+#         to_maximize=(
+#             0.0 if t < 0 else
+#             0.0 if is_terminating(s, a) else
+#             get_utility(s_, a_, Q[s_, a_](t - 1))
+#         )
+#     )
+#     return E[
+#         R(s, a) + (
+#             0.0 if t < 0 else
+#             0.0 if is_terminating(s, a) else
+#             Q[agent.s_, agent.a_](t - 1)
+#         )
+#     ]
 @jax.jit
-def update_belief(belief_vector, bid_idx, ask_idx, observed_action):
-    """
-    Vectorized Bayesian Update.
-    Computes likelihoods for ALL possible Mu values in parallel.
-    """
-    # 1. Run the greedy predictor on ALL possible Mus at once
-    # in_axes=(None, None, 0) means:
-    #   - Keep bid_idx constant (None)
-    #   - Keep ask_idx constant (None)
-    #   - Map over the 0-th dimension of POSSIBLE_MUS
-    all_pred_actions = jax.vmap(get_greedy_action_for_mu, in_axes=(None, None, 0))(
-        bid_idx, ask_idx, belief_mu_vals
-    )
+def update_belief_w(mu_guess, bi, ai, observed_a):
+    pred_a = get_greedy_action_for_mu(bi, ai, mu_guess)
+    return np.where(pred_a == observed_a, 1.0, 0.01)
 
-    # 2. Compare predictions vs reality (Vectorized)
-    # If prediction matches observed_action -> Likelihood 1.0
-    # If mismatch -> Likelihood 0.001 (epsilon)
-    likelihoods = np.where(all_pred_actions == observed_action, 1.0, 0.001)
 
-    # 3. Bayes Update (Prior * Likelihood)
-    unnormalized_posterior = belief_vector * likelihoods
+@memo(cache=True)
+def Q[s:S, b: B, c: C, a: A](t):
+    agent: knows(s, b, c, a)
+    agent: snapshots_self_as(future_agent)
+    return agent[ E[R(env.s, a)] + (0.0 if t <= 0 else imagine[
+        future_agent: given(s_ in S, wpp=Tr(s, a, s_)),)
+        future_agent: chooses(a_ in A, to_maximize=get_utility(s_, a_, Q[s_, b_, c_, a_](t - 1))),
+        future_agent: draws(b_ in B, wpp=update_belief_w(b_, s_, a_)),
+        future_agent: draws(c_ in C, wpp=update_belief_w(c_, s_, a_)),
+        E[ future_agent[ Q[s_, b_, c_, a_](t - 1) ] ]
+    ]) ]
 
-    # 4. Normalize
-    total_prob = np.sum(unnormalized_posterior)
+# @jax.jit
+# def update_belief(belief_vector, bid_idx, ask_idx, observed_action):
+#     """
+#     Vectorized Bayesian Update.
+#     Computes likelihoods for ALL possible Mu values in parallel.
+#     """
+#     # 1. Run the greedy predictor on ALL possible Mus at once
+#     # in_axes=(None, None, 0) means:
+#     #   - Keep bid_idx constant (None)
+#     #   - Keep ask_idx constant (None)
+#     #   - Map over the 0-th dimension of POSSIBLE_MUS
+#     all_pred_actions = jax.vmap(get_greedy_action_for_mu, in_axes=(None, None, 0))(
+#         bid_idx, ask_idx, belief_mu_vals
+#     )
 
-    # Return normalized (safe divide to avoid NaN if total is 0)
-    return np.where(total_prob > 0,
-                     unnormalized_posterior / total_prob,
-                     belief_vector)
+#     # 2. Compare predictions vs reality (Vectorized)
+#     # If prediction matches observed_action -> Likelihood 1.0
+#     # If mismatch -> Likelihood 0.001 (epsilon)
+#     likelihoods = np.where(all_pred_actions == observed_action, 1.0, 0.001)
 
-def get_expected_q(Q_vals, current_bi, current_ai, current_turn, belief_b, belief_c):
-    """
-    Calculates E[Q] by summing Q-values weighted by the probability of being in that world.
-    """
-    expected_q_values = np.zeros(3) # For actions 0, 1, 2
+#     # 3. Bayes Update (Prior * Likelihood)
+#     unnormalized_posterior = belief_vector * likelihoods
 
-    # Marginalize over all possible worlds (combinations of Mu_B and Mu_C)
-    for b_idx in range(num_mu_states):
-        prob_b = belief_b[b_idx]
-        if prob_b < 0.001: continue
+#     # 4. Normalize
+#     total_prob = np.sum(unnormalized_posterior)
 
-        for c_idx in range(num_mu_states):
-            prob_c = belief_c[c_idx]
-            if prob_c < 0.001: continue
+#     # Return normalized (safe divide to avoid NaN if total is 0)
+#     return np.where(total_prob > 0,
+#                      unnormalized_posterior / total_prob,
+#                      belief_vector)
 
-            # The probability of this specific world
-            joint_prob = prob_b * prob_c
+# def get_expected_q(Q_vals, current_bi, current_ai, current_turn, belief_b, belief_c):
+#     """
+#     Calculates E[Q] by summing Q-values weighted by the probability of being in that world.
+#     """
+#     expected_q_values = np.zeros(3) # For actions 0, 1, 2
 
-            # Get the state index for this world
-            s_idx = encode(current_bi, current_ai, current_turn, b_idx, c_idx)
+#     # Marginalize over all possible worlds (combinations of Mu_B and Mu_C)
+#     for b_idx in range(num_mu_states):
+#         prob_b = belief_b[b_idx]
+#         if prob_b < 0.001: continue
 
-            # Add weighted Q-values
-            expected_q_values += joint_prob * Q_vals[s_idx, :]
+#         for c_idx in range(num_mu_states):
+#             prob_c = belief_c[c_idx]
+#             if prob_c < 0.001: continue
 
-    return expected_q_values
+#             # The probability of this specific world
+#             joint_prob = prob_b * prob_c
+
+#             # Get the state index for this world
+#             s_idx = encode(current_bi, current_ai, current_turn, b_idx, c_idx)
+
+#             # Add weighted Q-values
+#             expected_q_values += joint_prob * Q_vals[s_idx, :]
+
+#     return expected_q_values
 
 def run_simulation(Q_vals):
     curr_bid = starting_bid
