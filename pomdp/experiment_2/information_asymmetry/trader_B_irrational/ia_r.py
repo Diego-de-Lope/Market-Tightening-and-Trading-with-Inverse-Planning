@@ -7,23 +7,21 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 from matplotlib.gridspec import GridSpec
 
-# --- 1. CONFIGURATION ---
+
 TRUE_MU = 104.0
 hidden_mu_vals = np.array([98.0, 104.0, 98.0])
 belief_mu_vals = np.array([95.0, 98.0, 101.0, 104.0])
 trader_names = ["A", "B", "C"]
 num_turns = 3
 
-PLANNING_BETA_B = 20.0
-PLANNING_BETA_C = .5
+PLANNING_BETA_B = .5
+PLANNING_BETA_C = 20.0
 
 starting_bid = 90.0
 starting_ask = 110.0
 num_prices = int(starting_ask - starting_bid + 1)
 num_mu_states = len(belief_mu_vals)
 
-# --- 2. FACTORED DOMAINS (Crucial for Speed) ---
-# Instead of one giant S, we use small domains to speed up 'given' loops
 Prices = np.arange(num_prices)
 Turns = np.arange(num_turns)
 
@@ -31,7 +29,6 @@ B = np.arange(num_mu_states)
 C = np.arange(num_mu_states)
 A = np.array([0, 1, 2]) # 0:Tighten, 1:Buy, 2:Sell
 
-# --- 3. JIT HELPERS ---
 
 @jax.jit
 def get_price_vals(bi, ai):
@@ -70,7 +67,6 @@ def get_stochastic_action(bi, ai, mu_val, beta, key):
     logits = get_logits(bi, ai, mu_val)
     return jax.random.categorical(key, logits * beta) # boltzmann distribution
 
-# --- PHYSICS LOGIC (Split for Speed) ---
 @jax.jit
 def next_bi_logic(bi, ai, a):
     # If action is 0 (Tighten) and valid, bi increases by 1. Else stays.
@@ -131,8 +127,6 @@ def get_belief_wpp(candidate_idx, current_idx, ti_next, bi_next, ai_next, obs_ac
     return np.where(is_target_turn, likelihood, identity)
 
 
-# --- 4. OPTIMIZED Q-FUNCTION ---
-
 @memo(cache=True)
 def Q[bi: Prices, ai: Prices, ti: Turns, b: B, c: C, a: A](t):
     # Note: State 's' is now split into 'bi, ai, ti'
@@ -142,14 +136,11 @@ def Q[bi: Prices, ai: Prices, ti: Turns, b: B, c: C, a: A](t):
     return agent [
         R(bi, ai, ti, a) + (0.0 if t <= 0 else imagine [
 
-            # 1. PHYSICS (Factored for Speed)
-            # Instead of one loop over 1323 states, we do 3 tiny loops (21+21+3).
-            # This is fast AND satisfies the parser.
             future_agent: given(bi_ in Prices, wpp=(bi_ == next_bi_logic(bi, ai, a))),
             future_agent: given(ai_ in Prices, wpp=(ai_ == next_ai_logic(bi, ai, a))),
             future_agent: given(ti_ in Turns,  wpp=(ti_ == next_ti_logic(ti))),
 
-            # 2. ACTION SELECTION
+
             future_agent: chooses(a_ in A,
                 to_maximize=get_utility(
                     bi_, ai_, ti_,
@@ -159,16 +150,13 @@ def Q[bi: Prices, ai: Prices, ti: Turns, b: B, c: C, a: A](t):
                 )
             ),
 
-            # 3. BELIEF UPDATES
             future_agent: draws(b_ in B, wpp=get_belief_wpp(b_, b, ti_, bi_, ai_, a_, 1)),
             future_agent: draws(c_ in C, wpp=get_belief_wpp(c_, c, ti_, bi_, ai_, a_, 2)),
 
-            # 4. RECURSION
             E[ future_agent[ Q[bi_, ai_, ti_, b_, c_, a_](t - 1) ] ]
     ]) ]
 
 
-# --- 5. VISUALIZATION FUNCTIONS ---
 def save_belief_distribution_b(history_data, filename='belief_distribution_agent_b.png'):
     """Save belief distribution heatmap for Agent B."""
     all_prob_b = []
@@ -484,6 +472,47 @@ def visualize_simulation(history_data):
     plt.savefig('pomdp_simulation_analysis.png', dpi=150, bbox_inches='tight')
     print("\n✓ Saved visualization to 'pomdp_simulation_analysis.png'")
     plt.show()
+def save_q_value_plot(history_data, filename='q_value_expectations.png'):
+    """Save Q-value expectations plot for Hero actions."""
+    all_q_expected = []
+    hero_steps = []  # Track which steps are Hero's turns
+
+    for round_data in history_data:
+        for step_data in round_data['steps']:
+            if 'q_expected' in step_data:
+                all_q_expected.append(step_data['q_expected'])
+                hero_steps.append(step_data['step'])
+
+    if not all_q_expected:
+        print(f"⚠ No Q-value data found, skipping {filename}")
+        return
+
+    q_expected_array = onp.array(all_q_expected)
+
+    fig, ax = plt.subplots(figsize=(12, 6))
+    ax.plot(q_expected_array[:, 0], 'o-', label='Q(Tighten)', markersize=4, linewidth=1.5, color='blue')
+    ax.plot(q_expected_array[:, 1], 's-', label='Q(BUY)', markersize=4, linewidth=1.5, color='green')
+    ax.plot(q_expected_array[:, 2], '^-', label='Q(SELL)', markersize=4, linewidth=1.5, color='red')
+    ax.set_xlabel('Agent A Turn Index', fontsize=12)
+    ax.set_ylabel('Expected Q-Value', fontsize=12)
+    ax.set_title('Expected Q-Values for Agent A Actions', fontsize=14, fontweight='bold')
+    ax.legend(fontsize=11)
+    ax.grid(True, alpha=0.3)
+
+    # Add vertical lines for round boundaries (if we can identify them)
+    # Count hero turns per round
+    hero_turn_idx = 0
+    for round_data in history_data:
+        round_hero_turns = sum(1 for step in round_data['steps'] if 'q_expected' in step)
+        if round_hero_turns > 0:
+            hero_turn_idx += round_hero_turns
+            if hero_turn_idx < len(all_q_expected):
+                ax.axvline(hero_turn_idx - 0.5, color='blue', linestyle='--', alpha=0.3, linewidth=1)
+
+    plt.tight_layout()
+    plt.savefig(filename, dpi=150, bbox_inches='tight')
+    print(f"✓ Saved {filename}")
+    plt.close()
 
 def run_simulation(Q_vals, visualize=True):
     # Overall Score Trackers
@@ -503,7 +532,6 @@ def run_simulation(Q_vals, visualize=True):
 
     for round_num in range(1, 6):
         round_steps = []  # Track steps in this round
-        # 2. MARKET RESET: Reset state for new round
         curr_bid = starting_bid
         curr_ask = starting_ask
 
@@ -511,7 +539,6 @@ def run_simulation(Q_vals, visualize=True):
 
         print(f"\n--- ROUND {round_num} START: Bid {curr_bid} | Ask {curr_ask} ---")
 
-        # 3. RUN UNTIL TRADE OR TIMEOUT
         for step in range(30):
             trader = trader_names[curr_turn]
             prev_trader_idx = (curr_turn - 1) % 3
@@ -524,17 +551,14 @@ def run_simulation(Q_vals, visualize=True):
                 expected_mu_b = float(np.sum(prob_b * belief_mu_vals))
                 confidence_b = float(np.max(prob_b))
 
-                # 1. BLEND MU (Update internal valuation)
                 base_mu = float(hidden_mu_vals[0])
                 blended_mu = (1.0 - confidence_b) * base_mu + (confidence_b) * expected_mu_b
                 blended_mu_history.append(blended_mu)
 
-                # 2. CALCULATE IMMEDIATE UTILITY using BLENDED MU
-                # This gives us [0, Profit_Buy, Profit_Sell] based on the NEW belief
+
                 rewards_now = onp.array(get_logits(b_idx, a_idx, blended_mu))
 
-                # 3. CALCULATE VALUE OF WAITING (Option Value)
-                # We consult the old planner to see how valuable "Tightening" (waiting) is.
+
                 q_s = Q_vals[b_idx, a_idx, curr_turn]
                 q_weighted_c = np.tensordot(prob_c, q_s, axes=([0], [1]))
                 q_strategic = np.tensordot(prob_b, q_weighted_c, axes=([0], [0]))
@@ -543,14 +567,9 @@ def run_simulation(Q_vals, visualize=True):
                 # The strategic value of Tightening is q_strategic[0]
                 value_of_waiting = q_strategic[0]
 
-                # 4. THE PANIC SWITCH (Critical Fix)
-                # If we are confident B knows the truth (confidence_b is high),
-                # the "Value of Waiting" drops to zero because B will steal the trade.
-                # If confidence is 0, we trust the old planner fully.
                 adjusted_value_of_waiting = value_of_waiting * (1.0 - confidence_b)
 
-                # 5. SYNTHESIZE THE DECISION
-                # Compare: [Adjusted Wait Value, Immediate Profit Buy, Immediate Profit Sell]
+
                 q_final = onp.array([adjusted_value_of_waiting, rewards_now[1], rewards_now[2]])
                 print(f"Q-final: {q_final}")
                 action = int(onp.argmax(q_final))

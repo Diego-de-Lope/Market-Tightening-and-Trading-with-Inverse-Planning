@@ -9,19 +9,15 @@ belief_mu_vals = np.array([96.0, 98.0, 100.0, 102.0, 104.0]) # A, B, C
 trader_names = ["A", "B", "C"]
 num_turns = 3
 
-# True market value of the asset (used for reward calculation)
 TRUE_MU = 100.0
 
-# Initial Market State
 starting_bid = 90.0
 starting_ask = 110.0
 num_prices = int(starting_ask - starting_bid + 1)
 num_mu_states = len(belief_mu_vals)
 
-# State Space: Bid_Index * Ask_Index * Turn_Index
 S = np.arange(num_prices * num_prices * num_turns * num_mu_states)
 
-# Actions: 0: tighten bid (+1) & ask (-1), 1: trade buy, 2: trade sell
 A = np.array([0, 1, 2])
 
 
@@ -275,12 +271,10 @@ def run_simulation(Q_vals):
         a_idx = int(curr_ask - starting_bid)
 
         if curr_turn == 0:
-            # --- AGENT A (HERO) uses Planned Policy ---
             q_expected = get_expected_q(Q_vals, b_idx, a_idx, curr_turn, belief_b, belief_c)
             action = int(np.argmax(q_expected))
             source = "POMDP (Belief-Based)"
         else:
-            # --- AGENTS B/C use Greedy Policy ---
             mu_i = hidden_mu_vals[curr_turn]
             action = int(get_greedy_action_for_mu(b_idx, a_idx, mu_i))
             source = f"Greedy (Mu={hidden_mu_vals[curr_turn]})"
@@ -301,7 +295,7 @@ def run_simulation(Q_vals):
             top_c = belief_mu_vals[np.argmax(belief_c)]
             print(f"     [A's Belief] Thinks C is likely: {top_c} (Prob: {np.max(belief_c):.2f})")
 
-        # 3. EXECUTE & DISTRIBUTE REWARDS
+     
         if action == 1: # BUY
             # Trader Buys @ Ask from Counterparty
             r_actor = TRUE_MU - curr_ask

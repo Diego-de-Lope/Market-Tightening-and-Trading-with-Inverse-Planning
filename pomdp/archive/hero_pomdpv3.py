@@ -190,7 +190,7 @@ def run_simulation(Q_vals):
         s_idx = encode(b_idx, a_idx, curr_turn)
 
         if curr_turn == 0:
-            # --- AGENT A (HERO) uses Planned Policy ---
+
             q_s = Q_vals[s_idx]
             q_weighted_c = np.tensordot(prob_c, q_s, axes=([0], [1]))
             q_expected = np.tensordot(prob_b, q_weighted_c, axes=([0], [0]))
@@ -199,7 +199,6 @@ def run_simulation(Q_vals):
             top_c = belief_mu_vals[np.argmax(prob_c)]
             source = f"POMDP (Belief Top B: {top_b}, Top C: {top_c})"
         else:
-            # --- AGENTS B/C use Greedy Policy ---
             mu_i = hidden_mu_vals[curr_turn]
             action = int(get_greedy_action_for_mu(b_idx, a_idx, mu_i))
             source = f"Greedy (Mu={hidden_mu_vals[curr_turn]})"
@@ -216,7 +215,6 @@ def run_simulation(Q_vals):
         print(f"Step {step} | {trader} [{source}] decides to {act_str}")
 
 
-        # 3. EXECUTE & DISTRIBUTE REWARDS
         if action == 1: # BUY
             # Trader Buys @ Ask from Counterparty
             r_actor = TRUE_MU - curr_ask

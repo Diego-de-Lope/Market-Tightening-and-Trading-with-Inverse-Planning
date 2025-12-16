@@ -4,7 +4,7 @@ import jax
 import jax.numpy as np
 import numpy as onp
 
-# --- 1. CONFIGURATION ---
+
 hidden_mu_vals = np.array([98.0, 104.0, 104.0])
 belief_mu_vals = np.array([96.0, 98.0, 100.0, 102.0, 104.0])
 trader_names = ["A", "B", "C"]
@@ -16,8 +16,7 @@ starting_ask = 110.0
 num_prices = int(starting_ask - starting_bid + 1)
 num_mu_states = len(belief_mu_vals)
 
-# --- 2. FACTORED DOMAINS (Crucial for Speed) ---
-# Instead of one giant S, we use small domains to speed up 'given' loops
+
 Prices = np.arange(num_prices)
 Turns = np.arange(num_turns)
 
@@ -25,7 +24,6 @@ B = np.arange(num_mu_states)
 C = np.arange(num_mu_states)
 A = np.array([0, 1, 2]) # 0:Tighten, 1:Buy, 2:Sell
 
-# --- 3. JIT HELPERS ---
 
 @jax.jit
 def get_price_vals(bi, ai):
@@ -43,7 +41,6 @@ def get_greedy_action_for_mu(bi, ai, mu_val):
     can_tighten = (bi + 1) < (ai - 1)
     return np.where(can_buy, 1, np.where(can_sell, 2, np.where(can_tighten, 0, 1)))
 
-# --- PHYSICS LOGIC (Split for Speed) ---
 @jax.jit
 def next_bi_logic(bi, ai, a):
     # If action is 0 (Tighten) and valid, bi increases by 1. Else stays.
@@ -99,8 +96,6 @@ def get_belief_wpp(candidate_idx, current_idx, ti_next, bi_next, ai_next, obs_ac
     return np.where(is_target_turn, likelihood, identity)
 
 
-# --- 4. OPTIMIZED Q-FUNCTION ---
-
 @memo(cache=True)
 def Q[bi: Prices, ai: Prices, ti: Turns, b: B, c: C, a: A](t):
     # Note: State 's' is now split into 'bi, ai, ti'
@@ -110,14 +105,11 @@ def Q[bi: Prices, ai: Prices, ti: Turns, b: B, c: C, a: A](t):
     return agent [
         R(bi, ai, ti, a) + (0.0 if t <= 0 else imagine [
 
-            # 1. PHYSICS (Factored for Speed)
-            # Instead of one loop over 1323 states, we do 3 tiny loops (21+21+3).
-            # This is fast AND satisfies the parser.
             future_agent: given(bi_ in Prices, wpp=(bi_ == next_bi_logic(bi, ai, a))),
             future_agent: given(ai_ in Prices, wpp=(ai_ == next_ai_logic(bi, ai, a))),
             future_agent: given(ti_ in Turns,  wpp=(ti_ == next_ti_logic(ti))),
 
-            # 2. ACTION SELECTION
+
             future_agent: chooses(a_ in A,
                 to_maximize=get_utility(
                     bi_, ai_, ti_,
@@ -127,16 +119,15 @@ def Q[bi: Prices, ai: Prices, ti: Turns, b: B, c: C, a: A](t):
                 )
             ),
 
-            # 3. BELIEF UPDATES
+
             future_agent: draws(b_ in B, wpp=get_belief_wpp(b_, b, ti_, bi_, ai_, a_, 1)),
             future_agent: draws(c_ in C, wpp=get_belief_wpp(c_, c, ti_, bi_, ai_, a_, 2)),
 
-            # 4. RECURSION
             E[ future_agent[ Q[bi_, ai_, ti_, b_, c_, a_](t - 1) ] ]
     ]) ]
 
 
-# --- 5. SIMULATION LOOP ---
+
 
 def run_simulation(Q_vals):
     # Q_vals shape is now (NumPrices, NumPrices, NumTurns, B, C, A)
@@ -163,7 +154,7 @@ def run_simulation(Q_vals):
         a_idx = int(curr_ask - starting_bid)
 
         if curr_turn == 0:
-            # --- AGENT A (HERO) ---
+
             # Index directly using the factored state components
             q_s = Q_vals[b_idx, a_idx, curr_turn]
 

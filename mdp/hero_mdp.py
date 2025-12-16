@@ -8,7 +8,7 @@ import matplotlib.patches as mpatches
 from matplotlib.gridspec import GridSpec
 from matplotlib.colors import LinearSegmentedColormap
 
-hidden_mu_vals = np.array([95.0, 95.0, 95.0]) # A, B, C
+hidden_mu_vals = np.array([95.0, 105.0, 95.0]) # A, B, C
 trader_names = ["A", "B", "C"]
 num_turns = 3
 
@@ -200,7 +200,6 @@ def visualize_optimal_policy(Q_vals, history=None, filename='optimal_policy_clea
     im = ax.imshow(masked_policy_grid, aspect='auto', cmap=cmap, norm=norm,
                    interpolation='nearest', origin='lower', extent=extent)
 
-    # --- Overlay Simulation Path (Optional) ---
     if history:
         path_bids = [step['bid'] for step in history]
         path_asks = [step['ask'] for step in history]
@@ -208,9 +207,43 @@ def visualize_optimal_policy(Q_vals, history=None, filename='optimal_policy_clea
         ax.plot(path_bids, path_asks, color='black', linewidth=3, linestyle='-', alpha=0.3, label='Path')
         ax.plot(path_bids, path_asks, color='white', linewidth=1.5, linestyle='--')
 
-        ax.scatter(path_bids[0], path_asks[0], color='gold', s=120, edgecolors='black', zorder=10, label='Start')
+        # Start icon: Star marker with gold color
+        ax.scatter(path_bids[0], path_asks[0], color='gold', s=400, marker='*',
+                  edgecolors='black', linewidths=2.5, zorder=10, label='Start')
+        # Add text annotation for clarity
+        ax.annotate('START', xy=(path_bids[0], path_asks[0]),
+                   xytext=(8, 8), textcoords='offset points',
+                   fontsize=10, fontweight='bold', color='black',
+                   bbox=dict(boxstyle='round,pad=0.4', facecolor='gold', alpha=0.9, edgecolor='black', linewidth=1.5),
+                   zorder=11)
+
+        # Trade/End icon: Different markers based on final action
         final_act = history[-1]['action_name']
-        ax.scatter(path_bids[-1], path_asks[-1], color='black', marker='X', s=150, zorder=10, label=f'End ({final_act})')
+        final_bid, final_ask = path_bids[-1], path_asks[-1]
+
+        # Use different icons based on final action
+        if final_act in ['BUY', 'SELL']:
+            # Trade completed: Use filled circle with checkmark or dollar sign
+            ax.scatter(final_bid, final_ask, color='green', s=500, marker='o',
+                      edgecolors='darkgreen', linewidths=3, zorder=10, label=f'Trade ({final_act})')
+            # Add dollar sign or checkmark as text overlay
+            trade_symbol = '$' if final_act == 'BUY' else '✓'
+            ax.text(final_bid, final_ask, trade_symbol, fontsize=16, fontweight='bold',
+                   color='white', ha='center', va='center', zorder=11)
+            ax.annotate(f'TRADE\n({final_act})', xy=(final_bid, final_ask),
+                       xytext=(8, -20), textcoords='offset points',
+                       fontsize=9, fontweight='bold', color='darkgreen',
+                       bbox=dict(boxstyle='round,pad=0.4', facecolor='lightgreen', alpha=0.9, edgecolor='darkgreen', linewidth=1.5),
+                       ha='left', zorder=11)
+        else:
+            # No trade: Use X marker
+            ax.scatter(final_bid, final_ask, color='red', s=400, marker='X',
+                      edgecolors='darkred', linewidths=3, zorder=10, label=f'End ({final_act})')
+            ax.annotate(f'END\n({final_act})', xy=(final_bid, final_ask),
+                       xytext=(8, -20), textcoords='offset points',
+                       fontsize=9, fontweight='bold', color='darkred',
+                       bbox=dict(boxstyle='round,pad=0.4', facecolor='lightcoral', alpha=0.9, edgecolor='darkred', linewidth=1.5),
+                       ha='left', zorder=11)
 
     # Formatting
     hero_mu = float(hidden_mu_vals[0])
@@ -219,7 +252,7 @@ def visualize_optimal_policy(Q_vals, history=None, filename='optimal_policy_clea
 
     ax.set_xlabel('Bid Price')
     ax.set_ylabel('Ask Price')
-    ax.set_title('Optimal Policy (Valid States Only)')
+    ax.set_title('Optimal Policy')
 
     # Legend
     patches = [
